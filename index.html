@@ -62,7 +62,31 @@
   #lightbox p { color:#eee; margin:10px 0 0; text-align:center; }
   #lightbox a { color:#9cc2ff; }
   #lbClose { position:absolute; top:10px; right:16px; width:auto; background:none; font-size:28px; padding:0 8px; }
-  .dir { width:0; height:0; }
+  #market { margin-top:14px; border-top:1px solid var(--line); padding-top:12px; }
+  #market h3 { margin:0 0 6px; font-size:14px; }
+  .mkctl { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:10px; font-size:13px; }
+  .mkctl select { width:auto; padding:3px 6px; }
+  .mkctl label { display:inline; margin:0; color:var(--ink); font-size:13px; }
+  .mkctl input[type=checkbox] { width:auto; vertical-align:middle; }
+  .kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
+  @media (max-width:900px){ .kpis { grid-template-columns:1fr; } }
+  .kpi { border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .kpi .k { font-size:12px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.02em; }
+  .kpi .v { font-size:22px; font-weight:700; margin:2px 0; font-variant-numeric:tabular-nums; }
+  .kpi .s { font-size:12px; color:var(--muted); }
+  .kpi.est { border-color:#1f6feb; background:#f3f7ff; }
+  .tag { display:inline-block; font-size:11px; font-weight:700; padding:1px 6px; border-radius:10px; vertical-align:middle; }
+  .tag.date { background:#eef0f3; color:#444; }
+  .tag.estim { background:#dbe8ff; color:#1349a8; }
+  .sale { border:2px solid #2da44e; background:#f1faf3; border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  .sale b { font-size:15px; }
+  .sale.weak { border:1px dashed #9aa4b2; background:#fafbfc; }
+  .sale.weak b { font-size:14px; }
+  .method { font-size:12px; color:var(--muted); margin:6px 0 10px; }
+  .method summary { cursor:pointer; }
+  #mkTable td, #mkTable th { font-size:12px; }
+  #mkTable tr.prob td { background:#e6f6ea; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -134,6 +158,15 @@
         <div><h3>Vue aérienne</h3><div id="satmap"></div></div>
         <div><h3 id="phTitle">Photos de rue (Panoramax)</h3><div id="photos"></div></div>
       </div>
+      <div id="market">
+        <h3>Ventes et prix au m² autour du bien</h3>
+        <div class="mkctl">
+          <label>Rayon <select id="mkRadius"><option value="150">150 m</option><option value="300" selected>300 m</option><option value="500">500 m</option></select></label>
+          <label><input type="checkbox" id="mkSurf" checked> Surfaces comparables uniquement (±30 %)</label>
+          <span id="mkType" class="hint"></span>
+        </div>
+        <div id="mkBody" class="hint">—</div>
+      </div>
     </div>
     <div class="tbl"><table id="res" hidden>
       <thead><tr><th>Score</th><th>Adresse</th><th>Complément</th><th>Surface</th><th>DPE</th><th>Conso</th><th>GES</th><th>Construit</th><th>Établi le</th><th>Liens</th></tr></thead>
@@ -154,6 +187,7 @@ const FIELDS = ["numero_dpe","adresse_ban","complement_adresse_logement","comple
   "numero_etage_appartement","type_batiment","surface_habitable_logement","etiquette_dpe","etiquette_ges",
   "conso_5_usages_par_m2_ep","emission_ges_5_usages_par_m2","cout_total_5_usages","annee_construction",
   "periode_construction","date_etablissement_dpe","date_fin_validite_dpe",
+  "numero_voie_ban","nom_rue_ban","code_insee_ban","code_departement_ban","code_region_ban",
   "coordonnee_cartographique_x_ban","coordonnee_cartographique_y_ban"];
 const MAX = 500;
 
@@ -175,6 +209,8 @@ const main = baseLayers("Plan");
 const map = L.map("map", { layers:[main.def] }).setView([46.6, 2.5], 5);
 L.control.layers(main.layers).addTo(map);
 const layer = L.layerGroup().addTo(map);
+const salesLayer = L.layerGroup().addTo(map);
+let current = null; // DPE affiché dans le panneau de détail : { r, ll }
 
 const sat = baseLayers("Satellite IGN");
 let satmap = null, satLayer = null;
@@ -237,7 +273,7 @@ const lbl = v => v ? `<span class="lbl ${esc(v)}">${esc(v)}</span>` : "";
 const fmtDate = s => s ? new Date(s).toLocaleDateString("fr-FR") : "";
 
 function render(rows, total, d) {
-  const tb = $("#res tbody"); tb.innerHTML = ""; layer.clearLayers(); $("#detail").hidden = true;
+  const tb = $("#res tbody"); tb.innerHTML = ""; layer.clearLayers(); salesLayer.clearLayers(); $("#detail").hidden = true;
   rows.forEach(r => r._s = score(r, d));
   rows.sort((a, b) => (b._s ?? -1) - (a._s ?? -1));
   const pts = [];
@@ -316,7 +352,12 @@ function showDetail(r, ll, compl, tr) {
   }
   $("#dLinks").innerHTML = links.map(([h, t]) => `<a target="_blank" rel="noopener" href="${h}">${t}</a>`).join("");
 
-  if (!ll) { $("#photos").innerHTML = `<p class="hint">Pas de coordonnées pour ce DPE.</p>`; return; }
+  if (!ll) {
+    $("#photos").innerHTML = `<p class="hint">Pas de coordonnées pour ce DPE.</p>`;
+    $("#mkBody").innerHTML = `<p class="hint">Pas de coordonnées : impossible de chercher les ventes voisines.</p>`;
+    current = null; salesLayer.clearLayers();
+    return;
+  }
   map.setView(ll, 18);
   initSatmap();
   satmap.invalidateSize();
@@ -326,6 +367,8 @@ function showDetail(r, ll, compl, tr) {
   L.circle(ll, { radius:RADIUS, weight:1, color:"#fff", dashArray:"4 4", fill:false }).addTo(satLayer);
   $("#detail").scrollIntoView({ behavior:"smooth", block:"nearest" });
   loadPhotos(ll, ++detailToken);
+  current = { r, ll };
+  loadMarket(r, ll);
 }
 
 async function loadPhotos(ll, token) {
@@ -381,6 +424,288 @@ async function loadPhotos(ll, token) {
     el.addEventListener("mouseleave", () => mk.setStyle({ radius:4 }));
   }
 }
+
+// ---------------------------------------------------------------------------
+// Marché : ventes DVF autour du bien + actualisation par l'indice INSEE-Notaires
+// ---------------------------------------------------------------------------
+const DVF = "https://app.dvf.etalab.gouv.fr/api/mutations3";
+const APICARTO = "https://apicarto.ign.fr/api/cadastre";
+const INSEE = "https://bdm.insee.fr/series/sdmx/data/SERIES_BDM";
+const MAX_SECTIONS = 30;
+
+// Indices des prix des logements anciens (CVS, base 100 = 2015), par zone et par type (A = appartements, M = maisons).
+const IDX = {
+  D75:{ zone:"Paris", A:"010567013" },
+  R11:{ zone:"Île-de-France", A:"010567077", M:"010567091" },
+  D77:{ zone:"Seine-et-Marne", A:"010567015", M:"010567019" },
+  D78:{ zone:"Yvelines", A:"010567021", M:"010567025" },
+  D91:{ zone:"Essonne", A:"010567027", M:"010567031" },
+  D92:{ zone:"Hauts-de-Seine", A:"010567033", M:"010567037" },
+  D93:{ zone:"Seine-Saint-Denis", A:"010567039", M:"010567043" },
+  D94:{ zone:"Val-de-Marne", A:"010567045", M:"010567049" },
+  D95:{ zone:"Val-d'Oise", A:"010567051", M:"010567055" },
+  LYON:{ zone:"agglomération de Lyon", A:"010567011" },
+  MARS:{ zone:"agglomération de Marseille", A:"010567007" },
+  LILLE:{ zone:"agglomération de Lille", M:"010567009" },
+  R84:{ zone:"Auvergne-Rhône-Alpes", A:"010567129", M:"010567133" },
+  R32:{ zone:"Hauts-de-France", A:"010567123", M:"010567127" },
+  R93:{ zone:"Provence-Alpes-Côte d'Azur", A:"010567111", M:"010567115" },
+  PR:{ zone:"Province", A:"010567063", M:"010567075" },
+  FR:{ zone:"France (hors Mayotte)", A:"010567117", M:"010567121" },
+};
+
+// Choisit l'indice le plus local disponible pour la commune et le type de logement.
+function pickIndex(r, t) {
+  const insee = r.code_insee_ban || "", dep = r.code_departement_ban || insee.slice(0, 2), reg = String(r.code_region_ban || "");
+  const cands = [];
+  if (/^6938\d$/.test(insee) || insee === "69266") cands.push("LYON");
+  if (/^132\d\d$/.test(insee)) cands.push("MARS");
+  if (insee === "59350") cands.push("LILLE");
+  if (dep === "75") cands.push("D75");
+  if (["77","78","91","92","93","94","95"].includes(dep)) cands.push("D" + dep);
+  if (["11","32","84","93"].includes(reg)) cands.push("R" + reg);
+  cands.push(dep.startsWith("97") ? "FR" : reg === "11" ? "R11" : "PR", "FR");
+  const key = cands.find(k => IDX[k][t]);
+  return { key, zone:IDX[key].zone, idbank:IDX[key][t] };
+}
+
+const idxCache = new Map();
+async function loadIndex(idbank) {
+  if (!idxCache.has(idbank)) idxCache.set(idbank, (async () => {
+    const res = await fetch(`${INSEE}/${idbank}?startPeriod=2018-Q1`);
+    if (!res.ok) throw new Error(`INSEE HTTP ${res.status}`);
+    const xml = new DOMParser().parseFromString(await res.text(), "application/xml");
+    const obs = [...xml.getElementsByTagName("Obs")].map(o => ({
+      q:o.getAttribute("TIME_PERIOD"), v:Number(o.getAttribute("OBS_VALUE")), p:o.getAttribute("OBS_STATUS") === "P" }))
+      .filter(o => o.v).sort((a, b) => a.q.localeCompare(b.q));
+    if (!obs.length) throw new Error("indice INSEE vide");
+    return { byQ:Object.fromEntries(obs.map(o => [o.q, o.v])), last:obs[obs.length - 1] };
+  })().catch(e => { idxCache.delete(idbank); throw e; }));
+  return idxCache.get(idbank);
+}
+const quarter = d => `${d.slice(0, 4)}-Q${Math.floor((Number(d.slice(5, 7)) - 1) / 3) + 1}`;
+const fmtQ = q => `T${q.slice(-1)} ${q.slice(0, 4)}`;
+
+// Sections cadastrales qui recoupent le disque de rayon R autour du point.
+async function sectionsAround(ll, R) {
+  const dLat = R / M_PER_DEG, dLon = R / (M_PER_DEG * Math.cos(ll[0] * Math.PI / 180));
+  const [s, w, n, e] = [ll[0] - dLat, ll[1] - dLon, ll[0] + dLat, ll[1] + dLon];
+  const geom = JSON.stringify({ type:"Polygon", coordinates:[[[w,s],[e,s],[e,n],[w,n],[w,s]]] });
+  const res = await fetch(`${APICARTO}/feuille?geom=${encodeURIComponent(geom)}`);
+  if (!res.ok) throw new Error(`cadastre IGN HTTP ${res.status}`);
+  const out = new Map();
+  for (const f of (await res.json()).features || []) {
+    const p = f.properties;
+    const commune = p.code_arr && p.code_arr !== "000" ? p.code_dep + p.code_arr : p.code_insee;
+    const prefix = p.com_abs + p.section;
+    out.set(`${commune}/${prefix}`, { commune, prefix });
+  }
+  return [...out.values()];
+}
+
+// Parcelle cadastrale sous le point BAN (souvent celle du bâtiment).
+async function parcelAt(ll) {
+  try {
+    const geom = JSON.stringify({ type:"Point", coordinates:[ll[1], ll[0]] });
+    const res = await fetch(`${APICARTO}/parcelle?geom=${encodeURIComponent(geom)}`);
+    const f = (await res.json()).features?.[0]?.properties;
+    return f ? f.idu : null;
+  } catch { return null; }
+}
+
+const dvfCache = new Map();
+function loadSection({ commune, prefix }) {
+  const k = `${commune}/${prefix}`;
+  if (!dvfCache.has(k)) dvfCache.set(k, fetch(`${DVF}/${k}`)
+    .then(r => r.ok ? r.json() : { mutations:[] }).then(j => j.mutations || [])
+    .catch(() => { dvfCache.delete(k); return []; }));
+  return dvfCache.get(k);
+}
+
+const dv = v => v == null || v === "None" || v === "nan" || v === "" ? null : v;
+const dn = v => dv(v) == null ? null : Number(v);
+const normAddr = s => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+// DVF a une ligne par local et par parcelle : on regroupe par mutation et on ne garde
+// que les ventes d'un seul logement (appartement ou maison) pour que le prix au m² ait un sens.
+function toSales(rows) {
+  const byMut = new Map();
+  for (const x of rows) {
+    if (!byMut.has(x.id_mutation)) byMut.set(x.id_mutation, []);
+    byMut.get(x.id_mutation).push(x);
+  }
+  const sales = [];
+  for (const [id, rs] of byMut) {
+    const m = rs[0];
+    if (m.nature_mutation !== "Vente") continue;
+    const locals = new Map();
+    for (const x of rs) if (x.type_local === "Appartement" || x.type_local === "Maison")
+      locals.set(`${x.id_parcelle}|${x.type_local}|${x.surface_reelle_bati}|${dv(x.lot1_numero)}`, x);
+    if (locals.size !== 1) continue;
+    const l = [...locals.values()][0];
+    const surface = dn(l.surface_reelle_bati), prix = dn(m.valeur_fonciere);
+    const lat = dn(l.latitude), lon = dn(l.longitude);
+    if (!surface || surface < 9 || !prix || lat == null) continue;
+    const m2 = prix / surface;
+    if (m2 < 300 || m2 > 30000) continue;
+    sales.push({ id, date:m.date_mutation, prix, surface, m2, type:l.type_local, pieces:dn(l.nombre_pieces_principales),
+      terrain:rs.reduce((s, x) => s + (dn(x.surface_terrain) || 0), 0) || null,
+      numero:dv(l.adresse_numero)?.replace(/\.0$/, ""), voie:dv(l.adresse_nom_voie), parcelle:l.id_parcelle, pos:[lat, lon],
+      dependances:rs.some(x => x.type_local === "Dépendance") });
+  }
+  return sales;
+}
+
+const quantile = (arr, q) => {
+  const s = [...arr].sort((a, b) => a - b), i = (s.length - 1) * q, lo = Math.floor(i);
+  return s[lo] + (s[Math.ceil(i)] - s[lo]) * (i - lo);
+};
+const eur = v => v == null ? "–" : Math.round(v).toLocaleString("fr-FR") + " €";
+const eurK = v => v == null ? "–" : v >= 1e6 ? (v / 1e6).toLocaleString("fr-FR", { maximumFractionDigits:2 }) + " M€"
+  : Math.round(v / 1000).toLocaleString("fr-FR") + " k€";
+const pct = v => (v >= 0 ? "+" : "") + v.toLocaleString("fr-FR", { maximumFractionDigits:1 }) + " %";
+
+let marketToken = 0;
+async function loadMarket(r, ll) {
+  const token = ++marketToken;
+  const body = $("#mkBody");
+  const R = Number($("#mkRadius").value);
+  const t = r.type_batiment === "maison" ? "M" : "A";
+  const typeLabel = t === "M" ? "Maison" : "Appartement";
+  $("#mkType").textContent = `Type comparé : ${typeLabel.toLowerCase()}s`;
+  body.innerHTML = `<p class="hint">Recherche des ventes DVF dans un rayon de ${R} m…</p>`;
+  salesLayer.clearLayers();
+
+  const idx = pickIndex(r, t);
+  let sections, index, parcel, idxErr = null;
+  try {
+    [sections, index, parcel] = await Promise.all([
+      sectionsAround(ll, R),
+      loadIndex(idx.idbank).catch(e => { idxErr = e; return null; }),
+      parcelAt(ll)]);
+  } catch (err) {
+    if (token === marketToken) body.innerHTML = `<p class="hint">Impossible de charger le cadastre (${esc(err.message)}).</p>`;
+    return;
+  }
+  if (token !== marketToken) return;
+  const truncated = sections.length > MAX_SECTIONS;
+  const rows = (await Promise.all(sections.slice(0, MAX_SECTIONS).map(loadSection))).flat();
+  if (token !== marketToken) return;
+
+  const surf = r.surface_habitable_logement;
+  const all = toSales(rows).map(s => ({ ...s, dist:distBearing(ll, s.pos).dist })).filter(s => s.dist <= R);
+
+  // Vente probable du bien : même adresse ou même parcelle, même type, surface à ±10 %.
+  const addrDpe = normAddr(`${r.numero_voie_ban || ""}${r.nom_rue_ban || ""}`);
+  for (const s of all) {
+    const sameAddr = addrDpe && s.numero && normAddr(`${s.numero}${s.voie}`) === addrDpe;
+    const samePlace = sameAddr || (parcel && s.parcelle === parcel) || s.dist < 15;
+    s.prob = !!(samePlace && s.type === typeLabel && surf && Math.abs(s.surface - surf) / surf <= 0.10);
+  }
+
+  // Actualisation : prix au m² × (indice du dernier trimestre / indice du trimestre de la vente).
+  for (const s of all) {
+    const base = index?.byQ[quarter(s.date)];
+    s.m2Now = base ? s.m2 * index.last.v / base : null;
+    s.prixNow = s.m2Now ? s.m2Now * s.surface : null;
+  }
+
+  const comps = all.filter(s => s.type === typeLabel && (!$("#mkSurf").checked || !surf || Math.abs(s.surface - surf) / surf <= 0.30));
+  renderMarket({ r, ll, R, typeLabel, idx, index, idxErr, all, comps, surf, truncated });
+}
+
+// Le DPE est obligatoire pour vendre : un DPE établi peu avant la vente renforce la correspondance.
+function dpeGap(dpeDate, saleDate) {
+  if (!dpeDate) return "";
+  const months = Math.round((new Date(saleDate) - new Date(dpeDate)) / (30.44 * 864e5));
+  if (months >= 0 && months <= 12) return `<b>DPE établi ${months ? `${months} mois` : "quelques jours"} avant la vente</b> (indice fort). `;
+  return months < 0 ? `DPE établi ${-months} mois après la vente (probablement pour une revente ou une location). `
+    : `DPE établi ${months} mois avant la vente. `;
+}
+
+function renderMarket({ r, ll, R, typeLabel, idx, index, idxErr, all, comps, surf, truncated }) {
+  const body = $("#mkBody");
+  const lastQ = index ? `${fmtQ(index.last.q)}${index.last.p ? " (provisoire)" : ""}` : null;
+  const idxTxt = index ? `indice INSEE-Notaires des prix des logements anciens — ${typeLabel.toLowerCase()}s, ${idx.zone}, dernier trimestre publié : ${lastQ}`
+    : `indice INSEE indisponible (${esc(idxErr?.message || "?")}) : pas d'actualisation possible`;
+  let html = "";
+
+  const gapM = d => r.date_etablissement_dpe ? (new Date(d) - new Date(r.date_etablissement_dpe)) / (30.44 * 864e5) : null;
+  for (const s of all) { const g = gapM(s.date); s.strong = s.prob && g != null && g >= 0 && g <= 12.5; }
+  const probs = all.filter(s => s.prob).sort((a, b) => (b.strong - a.strong) || b.date.localeCompare(a.date));
+  for (const s of probs) {
+    const evo = s.m2Now ? (s.m2Now / s.m2 - 1) * 100 : null;
+    html += `<div class="sale${s.strong ? "" : " weak"}">
+      <div><b>${s.strong ? `✔ Ce bien a probablement été vendu le ${fmtDate(s.date)}` : `Vente possible de ce bien (ou d'un lot similaire) le ${fmtDate(s.date)}`}</b></div>
+      <div>${s.numero ? esc(s.numero) + " " : ""}${esc(s.voie)} · ${s.type} de ${s.surface} m²${s.pieces ? `, ${s.pieces} pièces` : ""} (DPE : ${surf} m²)${s.dependances ? " · avec dépendance(s)" : ""}</div>
+      <div style="margin-top:4px"><span class="tag date">PRIX DE VENTE (${s.date.slice(0, 4)})</span> <b>${eur(s.prix)}</b> soit ${eur(s.m2)}/m² au ${fmtDate(s.date)}</div>
+      ${s.prixNow ? `<div style="margin-top:2px"><span class="tag estim">VALEUR ESTIMÉE AUJOURD'HUI</span> <b>≈ ${eurK(s.prixNow)}</b> soit ≈ ${eur(s.m2Now)}/m² (${pct(evo)} depuis la vente, selon l'indice)</div>` : ""}
+      <div class="hint" style="margin-top:4px">${dpeGap(r.date_etablissement_dpe, s.date)}Correspondance : même adresse ou même parcelle, même type, surface à ±10 %. À confirmer (un autre lot de surface proche est possible dans une copropriété).</div>
+    </div>`;
+  }
+  if (!probs.length)
+    html += `<p class="hint">Aucune vente de ce bien trouvée dans DVF (ventes jusqu'au 31/12/2025). Il n'a peut-être pas été vendu depuis 2021, ou la vente est trop récente pour être publiée.</p>`;
+
+  if (comps.length) {
+    const m2 = comps.map(s => s.m2), now = comps.map(s => s.m2Now).filter(Boolean);
+    const dates = comps.map(s => s.date).sort();
+    const medNow = now.length ? quantile(now, .5) : null;
+    html += `<div class="kpis">
+      <div class="kpi"><div class="k">Prix au m² constaté</div>
+        <div class="v">${eur(quantile(m2, .5))}</div>
+        <div class="s">Médiane des <b>prix réellement payés</b>, chacun à sa date de vente (${fmtDate(dates[0])} → ${fmtDate(dates[dates.length - 1])}).<br>Fourchette 25–75 % : ${eur(quantile(m2, .25))} – ${eur(quantile(m2, .75))}</div></div>
+      <div class="kpi est"><div class="k">Prix au m² estimé aujourd'hui</div>
+        <div class="v">${medNow ? eur(medNow) : "–"}</div>
+        <div class="s">Les mêmes ventes, <b>ramenées à la valeur du ${lastQ || "?"}</b> avec l'indice des prix.${now.length ? `<br>Fourchette 25–75 % : ${eur(quantile(now, .25))} – ${eur(quantile(now, .75))}` : ""}</div></div>
+      <div class="kpi est"><div class="k">Estimation du bien aujourd'hui</div>
+        <div class="v">${medNow && surf ? "≈ " + eurK(medNow * surf) : "–"}</div>
+        <div class="s">${surf ? `${surf} m² × prix au m² estimé aujourd'hui.` : "Surface du DPE inconnue."}${now.length && surf ? `<br>Fourchette : ${eurK(quantile(now, .25) * surf)} – ${eurK(quantile(now, .75) * surf)}` : ""}</div></div>
+    </div>
+    <details class="method"><summary>Comment ces prix sont calculés</summary>
+      <p><b>Prix constaté</b> : prix de vente réels publiés par la DGFiP (base DVF, ventes du 01/01/2021 au 31/12/2025), divisés par la surface bâtie. Ce sont des prix <u>à la date de chaque vente</u>, non corrigés.</p>
+      <p><b>Prix estimé aujourd'hui</b> : chaque prix constaté est multiplié par l'évolution de l'${idxTxt}. Exemple : une vente de 2022 est corrigée de la hausse ou de la baisse du marché entre son trimestre de vente et le ${lastQ || "dernier trimestre"}.</p>
+      <p><b>Limites</b> : l'indice mesure une tendance sur une zone large, pas celle d'un quartier ni l'état du logement (travaux, étage, extérieur…). Le prix DVF inclut les dépendances (cave, parking) vendues avec le logement. Ce n'est <u>pas une expertise</u>.</p>
+      <p>Échantillon : ${comps.length} vente${comps.length > 1 ? "s" : ""} d'un seul logement (${typeLabel.toLowerCase()}) à moins de ${R} m${$("#mkSurf").checked && surf ? `, surface entre ${Math.round(surf * .7)} et ${Math.round(surf * 1.3)} m²` : ""}.${comps.length < 5 ? " <b>Échantillon faible : élargissez le rayon ou décochez le filtre de surface.</b>" : ""}${truncated ? ` Zone très dense : seules les ${MAX_SECTIONS} premières sections cadastrales ont été lues.` : ""}</p>
+    </details>`;
+  } else {
+    html += `<p class="hint">Aucune vente comparable dans ce rayon. Élargissez le rayon ou décochez le filtre de surface.</p>`;
+  }
+
+  const list = [...comps, ...all.filter(s => s.prob && !comps.includes(s))]
+    .sort((a, b) => (b.prob - a.prob) || b.date.localeCompare(a.date));
+  if (list.length) {
+    html += `<div class="tbl"><table id="mkTable"><thead><tr>
+      <th>Date de vente</th><th>Adresse</th><th>Bien</th><th class="num">Prix de vente</th>
+      <th class="num">€/m² à la date</th><th class="num">€/m² estimé aujourd'hui</th><th class="num">Distance</th></tr></thead><tbody>
+      ${list.map((s, i) => `<tr data-i="${i}" class="${s.prob ? "prob" : ""}">
+        <td>${fmtDate(s.date)}</td>
+        <td>${s.numero ? esc(s.numero) + " " : ""}${esc(s.voie)}${s.strong ? " <b>← ce bien (probable)</b>" : s.prob ? " <b>← ce bien ?</b>" : ""}</td>
+        <td>${s.type} ${s.surface} m²${s.pieces ? ` · ${s.pieces} p.` : ""}${s.terrain && s.type === "Maison" ? ` · terrain ${s.terrain} m²` : ""}</td>
+        <td class="num">${eur(s.prix)}</td>
+        <td class="num">${eur(s.m2)}</td>
+        <td class="num">${s.m2Now ? eur(s.m2Now) : "–"}</td>
+        <td class="num">${Math.round(s.dist)} m</td></tr>`).join("")}
+    </tbody></table></div>`;
+  }
+  body.innerHTML = html;
+
+  L.circle(ll, { radius:R, weight:1, color:"#eb8235", fill:false, dashArray:"5 5" }).addTo(salesLayer);
+  const markers = list.map(s => L.circleMarker(s.pos, { radius:s.prob ? 8 : 5, weight:1, color:"#fff",
+      fillColor:s.prob ? "#2da44e" : "#eb8235", fillOpacity:.9 })
+    .bindTooltip(`${fmtDate(s.date)} · ${s.type} ${s.surface} m² · ${eur(s.prix)} (${eur(s.m2)}/m² à la date${s.m2Now ? `, ≈ ${eur(s.m2Now)}/m² aujourd'hui` : ""})`)
+    .addTo(salesLayer));
+  map.fitBounds(L.latLng(ll).toBounds(R * 2.2));
+  body.querySelectorAll("#mkTable tbody tr").forEach(tr => {
+    const m = markers[tr.dataset.i];
+    tr.addEventListener("mouseenter", () => m.setStyle({ radius:10 }).bringToFront());
+    tr.addEventListener("mouseleave", () => m.setStyle({ radius:list[tr.dataset.i].prob ? 8 : 5 }));
+    tr.addEventListener("click", () => { map.setView(m.getLatLng(), 19); m.openTooltip(); $("#map").scrollIntoView({ behavior:"smooth" }); });
+  });
+}
+
+const reloadMarket = () => { if (current) loadMarket(current.r, current.ll); };
+$("#mkRadius").addEventListener("change", reloadMarket);
+$("#mkSurf").addEventListener("change", reloadMarket);
 
 let pano = null;
 function openPhoto(p, caption) {
