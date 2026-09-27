@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retrouver un DPE</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pannellum/2.5.6/pannellum.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pannellum/2.5.6/pannellum.js"></script>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2330; --muted:#667085; --line:#e3e6eb; --accent:#1f6feb; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px 20px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { margin:0; font-size:18px; }
+  header p { margin:4px 0 0; color:var(--muted); }
+  main { display:grid; grid-template-columns:340px 1fr; gap:16px; padding:16px 20px; }
+  @media (max-width:900px){ main { grid-template-columns:1fr; padding:16px; } }
+  form, .panel { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  fieldset { border:0; padding:0; margin:0 0 12px; }
+  legend { font-weight:600; margin-bottom:6px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:6px 0 2px; }
+  input, select { width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .row3 { display:grid; grid-template-columns:2fr 1fr; gap:8px; }
+  button { width:100%; padding:9px; border:0; border-radius:6px; background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .hint { font-size:12px; color:var(--muted); }
+  #map { height:340px; border-radius:8px; margin-bottom:12px; border:1px solid var(--line); }
+  #status { margin:0 0 8px; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-weight:600; color:var(--muted); font-size:12px; white-space:nowrap; }
+  tr:hover td { background:#f0f5ff; cursor:pointer; }
+  .tbl { overflow-x:auto; }
+  .lbl { display:inline-block; min-width:22px; text-align:center; border-radius:4px; color:#fff; font-weight:700; padding:0 4px; }
+  .A{background:#009c6d}.B{background:#52b153}.C{background:#78bd76;}.D{background:#f4e70f;color:#333}.E{background:#f0b40f;color:#333}.F{background:#eb8235}.G{background:#d7221f}
+  .score { font-variant-numeric:tabular-nums; }
+  a { color:var(--accent); }
+  tr.sel td { background:#e3edff; }
+  #detail { border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:12px; }
+  #detail h2 { margin:0 0 2px; font-size:16px; }
+  .btns { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 10px; }
+  .btns a { padding:5px 10px; border:1px solid var(--line); border-radius:6px; text-decoration:none; font-size:13px; }
+  .btns a:hover { background:#f0f5ff; }
+  .cmp { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; }
+  @media (max-width:1100px){ .cmp { grid-template-columns:1fr; } }
+  #satmap { height:360px; border-radius:8px; border:1px solid var(--line); }
+  .cmp h3 { margin:0 0 6px; font-size:13px; color:var(--muted); font-weight:600; }
+  #photos { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px; max-height:360px; overflow-y:auto; }
+  .ph { position:relative; cursor:pointer; border-radius:6px; overflow:hidden; background:#ddd; aspect-ratio:4/3; }
+  .ph img { width:100%; height:100%; object-fit:cover; display:block; }
+  .ph span { position:absolute; left:0; right:0; bottom:0; padding:3px 6px; font-size:11px; color:#fff; background:linear-gradient(transparent,rgba(0,0,0,.75)); }
+  .ph.face { outline:3px solid #2da44e; outline-offset:-3px; }
+  #lightbox { position:fixed; inset:0; background:rgba(0,0,0,.88); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:2000; padding:16px; }
+  #lightbox[hidden] { display:none; }
+  #lightbox img { max-width:100%; max-height:82vh; border-radius:6px; }
+  #lbPano { width:min(1200px,100%); height:78vh; border-radius:6px; overflow:hidden; }
+  #lightbox img[hidden], #lbPano[hidden] { display:none; }
+  #lightbox p { color:#eee; margin:10px 0 0; text-align:center; }
+  #lightbox a { color:#9cc2ff; }
+  #lbClose { position:absolute; top:10px; right:16px; width:auto; background:none; font-size:28px; padding:0 8px; }
+  .dir { width:0; height:0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Retrouver un DPE</h1>
+  <p>Recherche inverse dans la base ADEME « DPE Logements existants (depuis juillet 2021) » à partir des infos d'une annonce.</p>
+</header>
+<main>
+  <form id="f">
+    <fieldset>
+      <legend>Numéro de DPE</legend>
+      <input name="numero" placeholder="ex. 2169E0622408L (si connu)">
+    </fieldset>
+    <fieldset>
+      <legend>Localisation *</legend>
+      <label>Codes postaux (séparés par des virgules) ou n° de département</label>
+      <input name="loc" placeholder="69003, 69006  —  ou  69">
+    </fieldset>
+    <fieldset>
+      <legend>Valeurs de l'étiquette</legend>
+      <div class="row3">
+        <div><label>Conso énergie primaire (kWh/m²/an)</label><input name="conso" type="number" step="any"></div>
+        <div><label>± tolérance</label><input name="consoTol" type="number" step="any" value="1"></div>
+      </div>
+      <div class="row3">
+        <div><label>Émissions GES (kg CO₂/m²/an)</label><input name="ges" type="number" step="any"></div>
+        <div><label>± tolérance</label><input name="gesTol" type="number" step="any" value="1"></div>
+      </div>
+      <div class="row">
+        <div><label>Étiquette DPE</label><select name="etiq"><option value="">—</option><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option></select></div>
+        <div><label>Étiquette GES</label><select name="etiqGes"><option value="">—</option><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>Coût annuel min (€)</label><input name="coutMin" type="number"></div>
+        <div><label>Coût annuel max (€)</label><input name="coutMax" type="number"></div>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Logement</legend>
+      <div class="row3">
+        <div><label>Surface habitable (m²)</label><input name="surf" type="number" step="any"></div>
+        <div><label>± m²</label><input name="surfTol" type="number" step="any" value="2"></div>
+      </div>
+      <div class="row">
+        <div><label>Type</label><select name="type"><option value="">—</option><option value="appartement">Appartement</option><option value="maison">Maison</option><option value="immeuble">Immeuble</option></select></div>
+        <div><label>Étage (souvent mal renseigné)</label><input name="etage" type="number"></div>
+      </div>
+      <div class="row">
+        <div><label>Construit après (année)</label><input name="anMin" type="number"></div>
+        <div><label>Construit avant (année)</label><input name="anMax" type="number"></div>
+      </div>
+      <div class="row">
+        <div><label>DPE établi après</label><input name="dateMin" type="date"></div>
+        <div><label>DPE établi avant</label><input name="dateMax" type="date"></div>
+      </div>
+    </fieldset>
+    <button id="go">Rechercher</button>
+    <p class="hint">Astuce : conso + GES + code postal suffisent souvent à isoler le bien. Élargissez les tolérances si rien ne sort (les annonces arrondissent les valeurs).</p>
+  </form>
+
+  <section class="panel">
+    <div id="map"></div>
+    <p id="status">Renseignez au moins une localisation ou un numéro de DPE.</p>
+    <div id="detail" hidden>
+      <h2 id="dTitle"></h2>
+      <div id="dInfo" class="hint"></div>
+      <div class="btns" id="dLinks"></div>
+      <div class="cmp">
+        <div><h3>Vue aérienne</h3><div id="satmap"></div></div>
+        <div><h3 id="phTitle">Photos de rue (Panoramax)</h3><div id="photos"></div></div>
+      </div>
+    </div>
+    <div class="tbl"><table id="res" hidden>
+      <thead><tr><th>Score</th><th>Adresse</th><th>Complément</th><th>Surface</th><th>DPE</th><th>Conso</th><th>GES</th><th>Construit</th><th>Établi le</th><th>Liens</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+</main>
+<div id="lightbox" hidden>
+  <button id="lbClose" aria-label="Fermer">×</button>
+  <img id="lbImg" alt="">
+  <div id="lbPano"></div>
+  <p id="lbCap"></p>
+</div>
+
+<script>
+const API = "https://data.ademe.fr/data-fair/api/v1/datasets/dpe03existant/lines";
+const FIELDS = ["numero_dpe","adresse_ban","complement_adresse_logement","complement_adresse_batiment","nom_residence",
+  "numero_etage_appartement","type_batiment","surface_habitable_logement","etiquette_dpe","etiquette_ges",
+  "conso_5_usages_par_m2_ep","emission_ges_5_usages_par_m2","cout_total_5_usages","annee_construction",
+  "periode_construction","date_etablissement_dpe","date_fin_validite_dpe",
+  "coordonnee_cartographique_x_ban","coordonnee_cartographique_y_ban"];
+const MAX = 500;
+
+proj4.defs("EPSG:2154","+proj=lcc +lat_0=46.5 +lon_0=3 +lat_1=49 +lat_2=44 +x_0=700000 +y_0=6600000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
+const BASES = {
+  "Plan": () => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { maxZoom:20, maxNativeZoom:19, attribution:"© OpenStreetMap" }),
+  "Satellite IGN": () => L.tileLayer("https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/jpeg&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}",
+    { maxZoom:21, maxNativeZoom:19, attribution:"© IGN Géoplateforme" }),
+  "Satellite Esri": () => L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom:21, maxNativeZoom:19, attribution:"© Esri World Imagery" }),
+};
+function baseLayers(defaultName) {
+  const layers = Object.fromEntries(Object.entries(BASES).map(([k, f]) => [k, f()]));
+  return { layers, def: layers[defaultName] };
+}
+
+const main = baseLayers("Plan");
+const map = L.map("map", { layers:[main.def] }).setView([46.6, 2.5], 5);
+L.control.layers(main.layers).addTo(map);
+const layer = L.layerGroup().addTo(map);
+
+const sat = baseLayers("Satellite IGN");
+let satmap = null, satLayer = null;
+function initSatmap() {
+  if (satmap) return;
+  satmap = L.map("satmap", { layers:[sat.def] });
+  L.control.layers(sat.layers).addTo(satmap);
+  satLayer = L.layerGroup().addTo(satmap);
+}
+
+const $ = s => document.querySelector(s);
+const num = v => v === "" || v == null ? null : Number(v);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function buildParams(d) {
+  const p = new URLSearchParams({ size: MAX, select: FIELDS.join(","), sort: "-date_etablissement_dpe" });
+  if (d.numero) { p.set("numero_dpe_eq", d.numero.trim().toUpperCase()); return p; }
+
+  const loc = d.loc.split(/[,;\s]+/).filter(Boolean);
+  if (!loc.length) throw new Error("Indiquez un code postal ou un département.");
+  if (loc.every(x => /^\d{5}$/.test(x))) p.set("code_postal_ban_in", loc.join(","));
+  else if (loc.length === 1 && /^(\d{2,3}|2[AB])$/i.test(loc[0])) p.set("code_departement_ban_eq", loc[0].toUpperCase());
+  else throw new Error("Localisation : codes postaux à 5 chiffres ou un numéro de département.");
+
+  const range = (field, v, tol) => {
+    if (v == null) return;
+    const t = Math.abs(tol ?? 0);
+    p.set(field + "_gte", v - t); p.set(field + "_lte", v + t);
+  };
+  range("conso_5_usages_par_m2_ep", num(d.conso), num(d.consoTol));
+  range("emission_ges_5_usages_par_m2", num(d.ges), num(d.gesTol));
+  range("surface_habitable_logement", num(d.surf), num(d.surfTol));
+  if (d.etiq) p.set("etiquette_dpe_eq", d.etiq);
+  if (d.etiqGes) p.set("etiquette_ges_eq", d.etiqGes);
+  if (d.type) p.set("type_batiment_eq", d.type);
+  if (d.etage !== "") p.set("numero_etage_appartement_eq", d.etage);
+  if (d.anMin) p.set("annee_construction_gte", d.anMin);
+  if (d.anMax) p.set("annee_construction_lte", d.anMax);
+  if (d.coutMin) p.set("cout_total_5_usages_gte", d.coutMin);
+  if (d.coutMax) p.set("cout_total_5_usages_lte", d.coutMax);
+  if (d.dateMin) p.set("date_etablissement_dpe_gte", d.dateMin);
+  if (d.dateMax) p.set("date_etablissement_dpe_lte", d.dateMax);
+  return p;
+}
+
+// Plus le score est proche de 100, plus le DPE colle aux valeurs saisies.
+function score(r, d) {
+  const parts = [];
+  const add = (val, target, tol) => {
+    if (target == null || val == null) return;
+    parts.push(Math.max(0, 1 - Math.abs(val - target) / Math.max(tol || 1, 0.5) / 2));
+  };
+  add(r.conso_5_usages_par_m2_ep, num(d.conso), num(d.consoTol));
+  add(r.emission_ges_5_usages_par_m2, num(d.ges), num(d.gesTol));
+  add(r.surface_habitable_logement, num(d.surf), num(d.surfTol));
+  return parts.length ? Math.round(100 * parts.reduce((a, b) => a + b) / parts.length) : null;
+}
+
+const lbl = v => v ? `<span class="lbl ${esc(v)}">${esc(v)}</span>` : "";
+const fmtDate = s => s ? new Date(s).toLocaleDateString("fr-FR") : "";
+
+function render(rows, total, d) {
+  const tb = $("#res tbody"); tb.innerHTML = ""; layer.clearLayers(); $("#detail").hidden = true;
+  rows.forEach(r => r._s = score(r, d));
+  rows.sort((a, b) => (b._s ?? -1) - (a._s ?? -1));
+  const pts = [];
+  for (const r of rows) {
+    let ll = null;
+    if (r.coordonnee_cartographique_x_ban && r.coordonnee_cartographique_y_ban) {
+      const [lon, lat] = proj4("EPSG:2154", "EPSG:4326", [r.coordonnee_cartographique_x_ban, r.coordonnee_cartographique_y_ban]);
+      ll = [lat, lon]; pts.push(ll);
+    }
+    const compl = [r.complement_adresse_logement, r.complement_adresse_batiment, r.nom_residence,
+      r.numero_etage_appartement ? `étage ${r.numero_etage_appartement}` : ""].filter(Boolean).join(" · ");
+    const q = encodeURIComponent(r.adresse_ban || "");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="score">${r._s ?? "–"}</td>
+      <td>${esc(r.adresse_ban)}<br><span class="hint">${esc(r.type_batiment)} · ${esc(r.numero_dpe)}</span></td>
+      <td>${esc(compl)}</td>
+      <td>${r.surface_habitable_logement ?? ""} m²</td>
+      <td>${lbl(r.etiquette_dpe)} ${lbl(r.etiquette_ges)}</td>
+      <td>${r.conso_5_usages_par_m2_ep ?? ""}</td>
+      <td>${r.emission_ges_5_usages_par_m2 ?? ""}</td>
+      <td>${esc(r.annee_construction || r.periode_construction)}</td>
+      <td>${fmtDate(r.date_etablissement_dpe)}</td>
+      <td style="white-space:nowrap">
+        <a target="_blank" rel="noopener" href="https://observatoire-dpe-audit.ademe.fr/afficher-dpe/${encodeURIComponent(r.numero_dpe)}">DPE</a> ·
+        <a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${q}">Carte</a>
+      </td>`;
+    const select = () => showDetail(r, ll, compl, tr);
+    tr.addEventListener("click", e => { if (e.target.tagName !== "A") select(); });
+    if (ll) L.circleMarker(ll, { radius:6, weight:1, fillOpacity:.8, color:"#1f6feb" })
+      .bindTooltip(`${esc(r.adresse_ban)} · ${r.surface_habitable_logement ?? "?"} m² · ${esc(r.etiquette_dpe)} ${r.conso_5_usages_par_m2_ep}`)
+      .on("click", select).addTo(layer);
+    tb.appendChild(tr);
+  }
+  $("#res").hidden = !rows.length;
+  if (pts.length) map.fitBounds(pts, { padding:[20,20], maxZoom:17 });
+  $("#status").textContent = !total ? "Aucun DPE trouvé : élargissez les tolérances ou retirez des critères."
+    : total > rows.length ? `${total} DPE correspondent — ${rows.length} affichés. Ajoutez des critères pour affiner.`
+    : `${total} DPE trouvé${total > 1 ? "s" : ""}.`;
+}
+
+const PANORAMAX = "https://api.panoramax.xyz";
+const RADIUS = 40; // mètres autour de l'adresse
+const M_PER_DEG = 111320;
+let detailToken = 0;
+
+// Distance (m) et cap (°, 0 = nord) du point a vers le point b, approximation locale suffisante à < 1 km.
+function distBearing([lat1, lon1], [lat2, lon2]) {
+  const dy = (lat2 - lat1) * M_PER_DEG;
+  const dx = (lon2 - lon1) * M_PER_DEG * Math.cos(lat1 * Math.PI / 180);
+  return { dist: Math.hypot(dx, dy), bearing: (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360 };
+}
+function offset([lat, lon], meters, bearing) {
+  const b = bearing * Math.PI / 180;
+  return [lat + meters * Math.cos(b) / M_PER_DEG, lon + meters * Math.sin(b) / (M_PER_DEG * Math.cos(lat * Math.PI / 180))];
+}
+
+function showDetail(r, ll, compl, tr) {
+  document.querySelectorAll("#res tr.sel").forEach(x => x.classList.remove("sel"));
+  tr.classList.add("sel");
+  $("#detail").hidden = false;
+  $("#dTitle").textContent = r.adresse_ban || "(adresse inconnue)";
+  $("#dInfo").innerHTML = [compl && esc(compl), `${r.surface_habitable_logement ?? "?"} m²`,
+    `${lbl(r.etiquette_dpe)} ${r.conso_5_usages_par_m2_ep ?? "?"} kWh/m²/an`, `${lbl(r.etiquette_ges)} ${r.emission_ges_5_usages_par_m2 ?? "?"} kg CO₂/m²/an`,
+    r.cout_total_5_usages ? `${Math.round(r.cout_total_5_usages)} €/an` : "", esc(r.annee_construction || r.periode_construction),
+    `DPE ${esc(r.numero_dpe)} du ${fmtDate(r.date_etablissement_dpe)}`].filter(Boolean).join(" · ");
+
+  const links = [[`https://observatoire-dpe-audit.ademe.fr/afficher-dpe/${encodeURIComponent(r.numero_dpe)}`, "📄 DPE complet (ADEME)"]];
+  if (ll) {
+    const [lat, lon] = ll.map(v => v.toFixed(6));
+    links.push(
+      [`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lon}`, "🚶 Google Street View"],
+      [`https://www.google.com/maps/@?api=1&map_action=map&center=${lat},${lon}&zoom=20&basemap=satellite`, "🛰️ Google satellite"],
+      [`https://www.geoportail.gouv.fr/carte?c=${lon},${lat}&z=19&l0=ORTHOIMAGERY.ORTHOPHOTOS::GEOPORTAIL:OGC:WMTS(1)&permalink=yes`, "🗺️ Géoportail"],
+      [`${PANORAMAX}/#focus=map&map=19/${lat}/${lon}`, "📷 Panoramax"]);
+  }
+  $("#dLinks").innerHTML = links.map(([h, t]) => `<a target="_blank" rel="noopener" href="${h}">${t}</a>`).join("");
+
+  if (!ll) { $("#photos").innerHTML = `<p class="hint">Pas de coordonnées pour ce DPE.</p>`; return; }
+  map.setView(ll, 18);
+  initSatmap();
+  satmap.invalidateSize();
+  satmap.setView(ll, 20);
+  satLayer.clearLayers();
+  L.circleMarker(ll, { radius:8, weight:3, color:"#fff", fillColor:"#d7221f", fillOpacity:1 }).addTo(satLayer);
+  L.circle(ll, { radius:RADIUS, weight:1, color:"#fff", dashArray:"4 4", fill:false }).addTo(satLayer);
+  $("#detail").scrollIntoView({ behavior:"smooth", block:"nearest" });
+  loadPhotos(ll, ++detailToken);
+}
+
+async function loadPhotos(ll, token) {
+  const box = $("#photos");
+  box.innerHTML = `<p class="hint">Recherche de photos…</p>`;
+  const dLat = RADIUS / M_PER_DEG, dLon = RADIUS / (M_PER_DEG * Math.cos(ll[0] * Math.PI / 180));
+  const bbox = [ll[1] - dLon, ll[0] - dLat, ll[1] + dLon, ll[0] + dLat].map(v => v.toFixed(6)).join(",");
+  let feats;
+  try {
+    const res = await fetch(`${PANORAMAX}/api/search?bbox=${bbox}&limit=100`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    feats = (await res.json()).features || [];
+  } catch (err) {
+    if (token === detailToken) box.innerHTML = `<p class="hint">Panoramax indisponible (${esc(err.message)}). Essayez Street View.</p>`;
+    return;
+  }
+  if (token !== detailToken) return; // un autre résultat a été sélectionné entre-temps
+
+  const photos = feats.map(f => {
+    const [lon, lat] = f.geometry.coordinates, p = f.properties || {};
+    const pos = [lat, lon];
+    const { dist, bearing } = distBearing(pos, ll);
+    const az = p["view:azimuth"];
+    const fov = p["pers:interior_orientation"]?.field_of_view;
+    const pano = fov >= 180;
+    const diff = az == null ? null : Math.abs(((bearing - az) % 360 + 540) % 360 - 180);
+    return { id:f.id, pos, dist, az, bearing, pano, date:p.datetime, thumb:f.assets?.thumb?.href, sd:f.assets?.sd?.href,
+      face: pano || (diff != null && diff <= 50) };
+  }).filter(p => p.thumb && p.dist <= RADIUS)
+    .sort((a, b) => (b.face - a.face) || (a.dist - b.dist))
+    .slice(0, 24);
+
+  $("#phTitle").textContent = `Photos de rue (Panoramax) — ${photos.length} à moins de ${RADIUS} m`;
+  if (!photos.length) {
+    box.innerHTML = `<p class="hint">Aucune photo Panoramax à proximité. Utilisez le bouton Google Street View ci-dessus.</p>`;
+    return;
+  }
+  box.innerHTML = "";
+  for (const p of photos) {
+    const when = p.date ? new Date(p.date).toLocaleDateString("fr-FR", { month:"short", year:"numeric" }) : "";
+    const caption = `${Math.round(p.dist)} m · ${when} · ${p.pano ? "360°" : p.face ? "vers le bien" : "autre direction"}`;
+    const el = document.createElement("div");
+    el.className = "ph" + (p.face ? " face" : "");
+    el.innerHTML = `<img loading="lazy" src="${esc(p.thumb)}" alt=""><span>${esc(caption)}</span>`;
+    el.addEventListener("click", () => openPhoto(p, caption));
+    box.appendChild(el);
+
+    const mk = L.circleMarker(p.pos, { radius:4, weight:1, color:"#fff", fillColor:p.face ? "#2da44e" : "#1f6feb", fillOpacity:1 })
+      .bindTooltip(caption).on("click", () => openPhoto(p, caption)).addTo(satLayer);
+    if (p.az != null && !p.pano)
+      L.polyline([p.pos, offset(p.pos, 8, p.az)], { weight:2, color:p.face ? "#2da44e" : "#1f6feb" }).addTo(satLayer);
+    el.addEventListener("mouseenter", () => mk.setStyle({ radius:8 }));
+    el.addEventListener("mouseleave", () => mk.setStyle({ radius:4 }));
+  }
+}
+
+let pano = null;
+function openPhoto(p, caption) {
+  $("#lbImg").hidden = p.pano;
+  $("#lbPano").hidden = !p.pano;
+  $("#lightbox").hidden = false;
+  if (p.pano) {
+    // Le centre d'une photo 360° Panoramax pointe vers view:azimuth : on tourne la vue vers le bien.
+    const yaw = ((p.bearing - (p.az ?? 0)) % 360 + 540) % 360 - 180;
+    pano?.destroy();
+    pano = pannellum.viewer("lbPano", { type:"equirectangular", panorama:p.sd || p.thumb,
+      autoLoad:true, yaw, pitch:8, hfov:85, northOffset:p.az ?? 0, compass:true, showFullscreenCtrl:true });
+  } else {
+    $("#lbImg").src = p.sd || p.thumb;
+  }
+  $("#lbCap").innerHTML = `${esc(caption)} — <a target="_blank" rel="noopener" href="${PANORAMAX}/#focus=pic&pic=${encodeURIComponent(p.id)}&map=19/${p.pos[0]}/${p.pos[1]}">ouvrir dans Panoramax (navigation, HD)</a>`;
+}
+const closeLb = () => { $("#lightbox").hidden = true; $("#lbImg").src = ""; pano?.destroy(); pano = null; };
+$("#lbClose").addEventListener("click", closeLb);
+$("#lightbox").addEventListener("click", e => { if (e.target.id === "lightbox") closeLb(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeLb(); });
+
+$("#f").addEventListener("submit", async e => {
+  e.preventDefault();
+  const d = Object.fromEntries(new FormData(e.target));
+  let params;
+  try { params = buildParams(d); } catch (err) { $("#status").textContent = err.message; return; }
+  $("#go").disabled = true; $("#status").textContent = "Recherche…";
+  try {
+    const res = await fetch(`${API}?${params}`);
+    if (!res.ok) throw new Error(`API ADEME : HTTP ${res.status}`);
+    const j = await res.json();
+    render(j.results, j.total, d);
+  } catch (err) {
+    $("#status").textContent = "Erreur : " + err.message;
+  } finally { $("#go").disabled = false; }
+});
+</script>
+</body>
+</html>
